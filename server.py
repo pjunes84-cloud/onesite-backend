@@ -30,9 +30,31 @@ app.add_middleware(
 def health():
     return {"ok": True}
 
+# --- 맨 위 import 안에 Query 포함되어 있어야 합니다.
+# from fastapi import FastAPI, HTTPException, Body, Query
+
+# ✅ 프리플라이트(OPTIONS) 없는 GET 버전
+@app.get("/api/probe")
+def api_probe_get(url: str = Query(...)):
+    return api_probe({"url": url})
+
+@app.get("/api/captions")
+def api_captions_get(url: str = Query(...)):
+    return api_captions({"url": url})
+
+@app.get("/api/download")
+def api_download_get(
+    url: str = Query(...),
+    format_id: str = Query("18")
+):
+    return api_download({"url": url, "format_id": format_id})
+
+
 # 정적 파일 폴더(선택): 필요시 ./static을 루트에 둬서 확인
 if os.path.isdir("static"):
     app.mount("/", StaticFiles(directory="static", html=True), name="static")
+
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # 내부 유틸
