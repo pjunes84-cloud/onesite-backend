@@ -1,3 +1,25 @@
+# --- 맨 위 import에 추가 ---
+from fastapi import Query
+
+# (기존) POST /api/probe, /api/download, /api/captions 는 그대로 둡니다.
+
+# ✅ 프리플라이트 없는 GET 버전들 (쿼리스트링)
+@app.get("/api/probe")
+async def api_probe_get(u: str = Query(..., alias="url")):
+    # 기존 probe() 핸들러에 넘겨 재사용 (pydantic 모델 이름은 기존 것에 맞추세요)
+    return await probe({"url": u})  # 혹은 ProbeBody(url=u)
+
+@app.get("/api/captions")
+async def api_captions_get(u: str = Query(..., alias="url")):
+    return await captions({"url": u})  # 혹은 CaptionsBody(url=u)
+
+@app.get("/api/download")
+async def api_download_get(
+    u: str = Query(..., alias="url"),
+    f: str = Query("18", alias="format_id")
+):
+    # GET은 파일 스트림 응답(FileResponse) 그대로 반환해도 됩니다.
+    return await download({"url": u, "format_id": f})  # 혹은 DownloadBody(url=u, format_id=f)
 
 import os, tempfile
 from typing import Dict, Any, Optional, List
