@@ -13,55 +13,28 @@ import requests
 
 app = FastAPI(title="OneSite API", version="1.0.0")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# CORS: 블로그/위젯에서 호출 가능하도록 허용
-# ※ 단순 GET 요청을 preflight 없이 통과시키려면 allow_credentials=False가 안전합니다.
-# ─────────────────────────────────────────────────────────────────────────────
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,
+    allow_credentials=False,  # 단순 GET을 preflight 없이 통과하려면 False가 안전
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 상태 확인
+# health
 @app.get("/health")
 def health():
     return {"ok": True}
 
-# --- 맨 위 import 안에 Query 포함되어 있어야 합니다.
-# from fastapi import FastAPI, HTTPException, Body, Query
-
-# ✅ 프리플라이트(OPTIONS) 없는 GET 버전
-@app.get("/api/probe")
-def api_probe_get(url: str = Query(...)):
-    return api_probe({"url": url})
-
-@app.get("/api/captions")
-def api_captions_get(url: str = Query(...)):
-    return api_captions({"url": url})
-
-@app.get("/api/download")
-def api_download_get(
-    url: str = Query(...),
-    format_id: str = Query("18")
-):
-    return api_download({"url": url, "format_id": format_id})
-
-
-# 정적 파일 폴더(선택): 필요시 ./static을 루트에 둬서 확인
+# 정적 파일(선택)
 if os.path.isdir("static"):
     app.mount("/", StaticFiles(directory="static", html=True), name="static")
 
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 내부 유틸
-# ─────────────────────────────────────────────────────────────────────────────
+# ───────── 내부 유틸 ─────────
 PREFERRED_CAPTION_EXTS = ["vtt", "srt", "ttml", "srv3", "json3"]
 PREFERRED_LANGS = ["ko", "ko-KR", "en", "en-US", "en-GB"]
-
 
 def _extract_info_sync(
     url: str,
@@ -69,7 +42,6 @@ def _extract_info_sync(
     format_: Optional[str] = None,
     outtmpl: Optional[str] = None,
 ):
-    """yt_dlp 동기 호출 (스레드풀에서 실행 예정)"""
     ydl_opts: Dict[str, Any] = {
         "quiet": True,
         "noplaylist": True,
@@ -77,7 +49,6 @@ def _extract_info_sync(
         "ignoreerrors": False,
         "skip_download": not download,
         "extract_flat": False,
-        # "concurrent_fragment_downloads": 3,  # 필요시
     }
     if format_:
         ydl_opts["format"] = format_
@@ -89,18 +60,13 @@ def _extract_info_sync(
         info = ydl.extract_info(url, download=download)
     return info
 
-
 async def _extract_info(
     url: str,
     download: bool = False,
     format_: Optional[str] = None,
     outtmpl: Optional[str] = None,
 ):
-    """이벤트 루프를 막지 않도록 스레드풀에서 실행"""
-    return await run_in_threadpool(
-        _extract_info_sync, url, download, format_, outtmpl
-    )
-
+    return await run_in_threadpool(_extract_info_sync, url, download, format_, outtmpl)
 
 def _format_list(info: Dict[str, Any]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
@@ -111,8 +77,7 @@ def _format_list(info: Dict[str, Any]) -> List[Dict[str, Any]]:
             "ext": f.get("ext"),
             "resolution": (
                 f"{f.get('width','?')}x{f.get('height','?')}"
-                if (f.get('width') and f.get('height'))
-                else (f.get("resolution") or "")
+                if (f.get('width') and f.get('height')) else (f.get("resolution") or "")
             ),
             "vcodec": f.get("vcodec"),
             "acodec": f.get("acodec"),
@@ -124,7 +89,6 @@ def _format_list(info: Dict[str, Any]) -> List[Dict[str, Any]]:
         })
     return out
 
-
 def _collect_captions(info: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     tracks: List[Dict[str, Any]] = []
 
@@ -133,8 +97,7 @@ def _collect_captions(info: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
             return
         for lang, arr in container.items():
             for t in arr or []:
-                url = t.get("url")
-                ext = t.get("ext")
+                url = t.get("url"); ext = t.get("ext")
                 if not url or not ext:
                     continue
                 tracks.append({"lang": lang, "ext": ext, "url": url, "auto": auto})
@@ -157,9 +120,8 @@ def _collect_captions(info: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
     tracks.sort(key=lambda x: (lang_rank(x["lang"]), ext_rank(x["ext"]), 1 if x["auto"] else 0))
     return {"tracks": tracks}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 공통 비즈니스 로직 (POST/GET에서 재사용)
-# ─────────────────────────────────────────────────────────────────────────────
+
+# ───────── 공통 비즈 로직 ─────────
 async def _do_probe(url: str) -> Dict[str, Any]:
     info = await _extract_info(url, download=False)
     return {
@@ -172,7 +134,6 @@ async def _do_probe(url: str) -> Dict[str, Any]:
         "formats": _format_list(info),
         "captions": _collect_captions(info),
     }
-
 
 async def _do_download(url: str, format_id: str) -> FileResponse:
     tmpdir = tempfile.mkdtemp(prefix="onesite_")
@@ -200,21 +161,18 @@ async def _do_download(url: str, format_id: str) -> FileResponse:
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
-
 async def _do_captions(url: str) -> Dict[str, Any]:
     info = await _extract_info(url, download=False)
     return _collect_captions(info)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# POST 엔드포인트 (기존 유지)
-# ─────────────────────────────────────────────────────────────────────────────
+
+# ───────── POST 엔드포인트 ─────────
 @app.post("/api/probe")
 async def api_probe_post(payload: Dict[str, Any] = Body(...)):
     url = payload.get("url")
     if not url:
         raise HTTPException(status_code=400, detail="Missing 'url'.")
     return await _do_probe(url)
-
 
 @app.post("/api/download")
 async def api_download_post(payload: Dict[str, Any] = Body(...)):
@@ -224,7 +182,6 @@ async def api_download_post(payload: Dict[str, Any] = Body(...)):
         raise HTTPException(status_code=400, detail="Body must include 'url' and 'format_id'.")
     return await _do_download(url, str(format_id))
 
-
 @app.post("/api/captions")
 async def api_captions_post(payload: Dict[str, Any] = Body(...)):
     url = payload.get("url")
@@ -232,18 +189,15 @@ async def api_captions_post(payload: Dict[str, Any] = Body(...)):
         raise HTTPException(status_code=400, detail="Missing 'url'.")
     return await _do_captions(url)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ✅ 프리플라이트 없는 GET 버전 (쿼리스트링)
-# ─────────────────────────────────────────────────────────────────────────────
+
+# ───────── GET 엔드포인트(프리플라이트 회피) ─────────
 @app.get("/api/probe")
 async def api_probe_get(u: str = Query(..., alias="url")):
     return await _do_probe(u)
 
-
 @app.get("/api/captions")
 async def api_captions_get(u: str = Query(..., alias="url")):
     return await _do_captions(u)
-
 
 @app.get("/api/download")
 async def api_download_get(
@@ -252,9 +206,8 @@ async def api_download_get(
 ):
     return await _do_download(u, f)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# 캡션 파일 직접 내려받기 (옵션)
-# ─────────────────────────────────────────────────────────────────────────────
+
+# ───────── 캡션 파일 직접 내려받기(옵션) ─────────
 @app.get("/api/captions/download")
 async def api_captions_download(
     url: str = Query(...),
